@@ -31,8 +31,11 @@ func (p *BitcoinDiamondParser) ParseTx(b []byte) (*bchain.Tx, error) {
 		return nil, err
 	}
 	version := binary.LittleEndian.Uint32(buf)
-
-	r.Seek(32, 0)
+	if version == 12 {
+		r.Seek(32, 0)
+	} else {
+		r.Seek(0, 0)
+	}
 
 	if err := t.Deserialize(r); err != nil {
 		return nil, err
