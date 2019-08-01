@@ -1396,7 +1396,12 @@ func (d *RocksDB) GetTx(txid string) (*bchain.Tx, uint32, error) {
 	defer val.Free()
 	data := val.Data()
 	if len(data) > 4 {
-		return d.chainParser.UnpackTx(data)
+		tx, height, err := d.chainParser.UnpackTx(data)
+		if err != nil {
+			return nil, 0, err
+		}
+		tx.Txid = txid  // bcd txid calculate problem
+		return tx, height, err
 	}
 	return nil, 0, nil
 }
