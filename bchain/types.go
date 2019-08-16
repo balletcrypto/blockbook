@@ -292,6 +292,7 @@ type BlockChainParser interface {
 type Mempool interface {
 	Resync() (int, error)
 	GetTransactions(address string) ([]Outpoint, error)
+	AddTransaction(txid string) error
 	GetAddrDescTransactions(addrDesc AddressDescriptor) ([]Outpoint, error)
 	GetAllEntries() MempoolTxidEntries
 	GetTransactionTime(txid string) uint32
