@@ -317,6 +317,12 @@ func (c *mempoolWithMetrics) observeRPCLatency(method string, start time.Time, e
 	c.m.RPCLatency.With(common.Labels{"method": method, "error": e}).Observe(float64(time.Since(start)) / 1e6) // in milliseconds
 }
 
+func (c *mempoolWithMetrics) AddTransaction(txid string) (err error) {
+	defer func(s time.Time) { c.observeRPCLatency("AddTransaction", s, err) }(time.Now())
+	err = c.mempool.AddTransaction(txid)
+	return err
+}
+
 func (c *mempoolWithMetrics) Resync() (count int, err error) {
 	defer func(s time.Time) { c.observeRPCLatency("ResyncMempool", s, err) }(time.Now())
 	count, err = c.mempool.Resync()

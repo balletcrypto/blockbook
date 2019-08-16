@@ -157,3 +157,7 @@ func (m *MempoolEthereumType) RemoveTransactionFromMempool(txid string) {
 	}
 	m.mux.Unlock()
 }
+
+func (m *MempoolEthereumType) AddTransaction(txid string) error {
+	return nil
+}

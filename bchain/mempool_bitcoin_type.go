@@ -128,6 +128,42 @@ func (m *MempoolBitcoinType) getTxAddrs(txid string, chanInput chan Outpoint, ch
 	return io, true
 }
 
+func (m *MempoolBitcoinType) AddTransaction(txid string) error {
+	onNewEntry := func(txid string, entry txEntry) {
+		if len(entry.addrIndexes) > 0 {
+			m.mux.Lock()
+			_, exists := m.txEntries[txid]
+			if !exists {
+				m.txEntries[txid] = entry
+				for _, si := range entry.addrIndexes {
+					m.addrDescToTx[si.addrDesc] = append(m.addrDescToTx[si.addrDesc], Outpoint{txid, si.n})
+				}
+				glog.Infof("Add txid:[%s] into mempool", txid)
+			}
+
+			m.mux.Unlock()
+		}
+	}
+	chanInputAddtx := make(chan Outpoint, 1)
+	chanResultAddtx := make(chan *addrIndex, 1)
+	go func() {
+		for input := range chanInputAddtx {
+			ai := m.getInputAddress(input)
+			chanResultAddtx <- ai
+		}
+	}()
+
+	io, ok := m.getTxAddrs(txid, chanInputAddtx, chanResultAddtx)
+	if !ok {
+		io = []addrIndex{}
+	}
+	tio := txidio{txid, io}
+	txTime := uint32(time.Now().Unix())
+	onNewEntry(tio.txid, txEntry{tio.io, txTime})
+
+	return nil
+}
+
 // Resync gets mempool transactions and maps outputs to transactions.
 // Resync is not reentrant, it should be called from a single thread.
 // Read operations (GetTransactions) are safe.
