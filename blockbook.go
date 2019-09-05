@@ -525,24 +525,6 @@ func syncMempoolLoop() {
 	defer close(chanSyncMempoolDone)
 	glog.Info("syncMempoolLoop starting")
 
-
-	go func() {
-Loop:
-		for {
-			select {
-			case _, ok := <-chanSyncMempool:
-				if !ok {
-					break Loop
-				}
-			case txid := <-server.ResyncMempoolAfterSendTxCh:
-				err := mempool.AddTransaction(txid)
-				if err != nil {
-					glog.Errorf("error in resync txid to mempool, txid:[%s], err:[%s]", txid, err.Error())
-				}
-			}
-		}
-	}()
-
 	// resync mempool about every minute if there are no chanSyncMempool requests, with debounce 1 second
 	tickAndDebounce(time.Duration(*resyncMempoolPeriodMs)*time.Millisecond, debounceResyncMempoolMs*time.Millisecond, chanSyncMempool, func() {
 		internalState.StartedMempoolSync()
