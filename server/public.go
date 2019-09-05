@@ -1079,10 +1079,6 @@ func (s *PublicServer) apiSendTx(r *http.Request, apiVersion int) (interface{}, 
 		if err != nil {
 			return nil, api.NewAPIError(err.Error(), true)
 		}
-		go func() {
-			glog.Info("ResyncMempoolAfterSendTx, tx_id: ", res.Result)
-			ResyncMempoolAfterSendTxCh <- res.Result
-		}()
 		return res, nil
 	}
 	return nil, api.NewAPIError("Missing tx blob", true)
