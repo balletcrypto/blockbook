@@ -57,44 +57,32 @@ func (z *ZCashRPC) Initialize() error {
 // GetBlock returns block with given hash.
 func (z *ZCashRPC) GetBlock(hash string, height uint32) (*bchain.Block, error) {
 	var err error
-	if hash == "" && height > 0 {
+	if hash == "" {
 		hash, err = z.GetBlockHash(height)
 		if err != nil {
 			return nil, err
 		}
 	}
-
-	glog.V(1).Info("rpc: getblock (verbosity=1) ", hash)
-
-	res := btc.ResGetBlockThin{}
-	req := btc.CmdGetBlock{Method: "getblock"}
-	req.Params.BlockHash = hash
-	req.Params.Verbosity = 1
-	err = z.Call(&req, &res)
-
+	if !z.ParseBlocks {
+		return z.GetBlockFull(hash)
+	}
+	// optimization
+	if height > 0 {
+		return z.GetBlockWithoutHeader(hash, height)
+	}
+	header, err := z.GetBlockHeader(hash)
+	if err != nil {
+		return nil, err
+	}
+	data, err := z.GetBlockRaw(hash)
+	if err != nil {
+		return nil, err
+	}
+	block, err := z.Parser.ParseBlock(data)
 	if err != nil {
 		return nil, errors.Annotatef(err, "hash %v", hash)
 	}
-	if res.Error != nil {
-		return nil, errors.Annotatef(res.Error, "hash %v", hash)
-	}
-
-	txs := make([]bchain.Tx, 0, len(res.Result.Txids))
-	for _, txid := range res.Result.Txids {
-		tx, err := z.GetTransaction(txid)
-		if err != nil {
-			if err == bchain.ErrTxNotFound {
-				glog.Errorf("rpc: getblock: skipping transanction in block %s due error: %s", hash, err)
-				continue
-			}
-			return nil, err
-		}
-		txs = append(txs, *tx)
-	}
-	block := &bchain.Block{
-		BlockHeader: res.Result.BlockHeader,
-		Txs:         txs,
-	}
+	block.BlockHeader = *header
 	return block, nil
 }
 
