@@ -700,6 +700,7 @@ func (w *Worker) GetAddress(address string, page int, txsOnPage int, option Acco
 	} else {
 		// ba can be nil if the address is only in mempool!
 		ba, err = w.db.GetAddrDescBalance(addrDesc, db.AddressBalanceDetailNoUTXO)
+		glog.Info("GetAddrDescBalance ", address, " finished in ", time.Since(start))
 		if err != nil {
 			return nil, NewAPIError(fmt.Sprintf("Address not found, %v", err), true)
 		}
@@ -720,6 +721,7 @@ func (w *Worker) GetAddress(address string, page int, txsOnPage int, option Acco
 	// process mempool, only if toHeight is not specified
 	if filter.ToHeight == 0 && !filter.OnlyConfirmed {
 		txm, err = w.getAddressTxids(addrDesc, true, filter, maxInt)
+		glog.Info("getAddressTxids ", address, " finished in ", time.Since(start))
 		if err != nil {
 			return nil, errors.Annotatef(err, "getAddressTxids %v true", addrDesc)
 		}
@@ -744,10 +746,12 @@ func (w *Worker) GetAddress(address string, page int, txsOnPage int, option Acco
 				}
 			}
 		}
+		glog.Info("GetTransaction ", address, " finished in ", time.Since(start))
 	}
 	// get tx history if requested by option or check mempool if there are some transactions for a new address
 	if option >= AccountDetailsTxidHistory {
 		txc, err := w.getAddressTxids(addrDesc, false, filter, (page+1)*txsOnPage)
+		glog.Info("getAddressTxids ", address, " finished in ", time.Since(start))
 		if err != nil {
 			return nil, errors.Annotatef(err, "getAddressTxids %v false", addrDesc)
 		}
@@ -770,6 +774,7 @@ func (w *Worker) GetAddress(address string, page int, txsOnPage int, option Acco
 				txids = append(txids, txid)
 			} else {
 				tx, err := w.txFromTxid(txid, bestheight, option, nil)
+				glog.Info("txFromTxid ", address, " finished in ", time.Since(start))
 				if err != nil {
 					return nil, err
 				}
