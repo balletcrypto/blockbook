@@ -774,7 +774,6 @@ func (w *Worker) GetAddress(address string, page int, txsOnPage int, option Acco
 				txids = append(txids, txid)
 			} else {
 				tx, err := w.txFromTxid(txid, bestheight, option, nil)
-				glog.Info("txFromTxid ", address, " finished in ", time.Since(start))
 				if err != nil {
 					return nil, err
 				}
