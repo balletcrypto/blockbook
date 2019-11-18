@@ -781,6 +781,7 @@ func (w *Worker) GetAddress(address string, page int, txsOnPage int, option Acco
 				txs = append(txs, tx)
 			}
 		}
+		glog.Info("txFromTxid ", address, " finished in ", time.Since(start))
 	}
 	if w.chainType == bchain.ChainBitcoinType {
 		totalReceived = ba.ReceivedSat()
