@@ -258,6 +258,7 @@ func (s *PublicServer) jsonHandler(handler func(r *http.Request, apiVersion int)
 	return func(w http.ResponseWriter, r *http.Request) {
 		var data interface{}
 		var err error
+		PrintRequestParams(r)
 		defer func() {
 			if e := recover(); e != nil {
 				glog.Error(getFunctionName(handler), " recovered from panic: ", e)
@@ -1009,17 +1010,19 @@ func (s *PublicServer) apiUtxo(r *http.Request, apiVersion int) (interface{}, er
 				return nil, api.NewAPIError("Parameter 'confirmed' cannot be converted to boolean", true)
 			}
 		}
-		gap, ec := strconv.Atoi(r.URL.Query().Get("gap"))
-		if ec != nil {
-			gap = 0
-		}
-		utxo, err = s.api.GetXpubUtxo(r.URL.Path[i+1:], onlyConfirmed, gap)
-		if err == nil {
-			s.metrics.ExplorerViews.With(common.Labels{"action": "api-xpub-utxo"}).Inc()
-		} else {
-			utxo, err = s.api.GetAddressUtxo(r.URL.Path[i+1:], onlyConfirmed)
-			s.metrics.ExplorerViews.With(common.Labels{"action": "api-address-utxo"}).Inc()
-		}
+		//gap, ec := strconv.Atoi(r.URL.Query().Get("gap"))
+		//if ec != nil {
+		//	gap = 0
+		//}
+		//utxo, err = s.api.GetXpubUtxo(r.URL.Path[i+1:], onlyConfirmed, gap)
+		//if err == nil {
+		//	s.metrics.ExplorerViews.With(common.Labels{"action": "api-xpub-utxo"}).Inc()
+		//} else {
+		//	utxo, err = s.api.GetAddressUtxo(r.URL.Path[i+1:], onlyConfirmed)
+		//	s.metrics.ExplorerViews.With(common.Labels{"action": "api-address-utxo"}).Inc()
+		//}
+		utxo, err = s.api.GetAddressUtxo(r.URL.Path[i+1:], onlyConfirmed)
+		s.metrics.ExplorerViews.With(common.Labels{"action": "api-address-utxo"}).Inc()
 		if err == nil && apiVersion == apiV1 {
 			return s.api.AddressUtxoToV1(utxo), nil
 		}

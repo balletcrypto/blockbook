@@ -813,7 +813,7 @@ func (w *Worker) waitForBackendSync() {
 }
 
 func (w *Worker) getAddrDescUtxo(addrDesc bchain.AddressDescriptor, ba *db.AddrBalance, onlyConfirmed bool, onlyMempool bool) (Utxos, error) {
-	w.waitForBackendSync()
+	// w.waitForBackendSync()
 	var err error
 	r := make(Utxos, 0, 8)
 	spentInMempool := make(map[string]struct{})
