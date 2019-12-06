@@ -13,6 +13,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/golang/glog"
@@ -768,17 +769,37 @@ func (w *Worker) GetAddress(address string, page int, txsOnPage int, option Acco
 				pg, _, _, _ = computePaging(totalResults, page, txsOnPage)
 			}
 		}
-		for i := from; i < to; i++ {
-			txid := txc[i]
-			if option == AccountDetailsTxidHistory {
+		if option == AccountDetailsTxidHistory {
+			for i := from; i < to; i++ {
+				txid := txc[i]
 				txids = append(txids, txid)
-			} else {
-				tx, err := w.txFromTxid(txid, bestheight, option, nil)
-				if err != nil {
-					return nil, err
-				}
-				txs = append(txs, tx)
 			}
+		} else {
+			//for i := from; i < to; i++ {
+			//	txid := txc[i]
+			//	tx, err := w.txFromTxid(txid, bestheight, option, nil)
+			//	if err != nil {
+			//		return nil, err
+			//	}
+			//	txs = append(txs, tx)
+			//}
+			lenTxs := to - from
+			var wg sync.WaitGroup
+			wg.Add(lenTxs)
+			for i := from; i < to; i++ {
+				txid := txc[i]
+				go func(txid string) {
+					tx, err := w.txFromTxid(txid, bestheight, option, nil)
+					if err != nil {
+						glog.Error(err.Error())
+					} else {
+						txs = append(txs, tx)
+					}
+					wg.Done()
+				}(txid)
+			}
+			wg.Wait()
+			sort.Sort(SortTx(txs))
 		}
 		glog.Info("txFromTxid ", address, " finished in ", time.Since(start))
 	}

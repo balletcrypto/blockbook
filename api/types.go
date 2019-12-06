@@ -198,6 +198,12 @@ type Tx struct {
 	EthereumSpecific *EthereumSpecific `json:"ethereumSpecific,omitempty"`
 }
 
+type SortTx []*Tx
+
+func (s SortTx) Less(i, j int) bool { return s[i].Blocktime > s[j].Blocktime }
+func (s SortTx) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
+func (s SortTx) Len() int           { return len(s) }
+
 // FeeStats contains detailed block fee statistics
 type FeeStats struct {
 	TxCount         int       `json:"txCount"`
