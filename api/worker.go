@@ -391,6 +391,7 @@ func (w *Worker) getAddressTxids(addrDesc bchain.AddressDescriptor, mempool bool
 			return nil, err
 		}
 	}
+	glog.Infof("done getAddressTxids, addrDesc:[%s]", addrDesc.String())
 	return txids, nil
 }
 
@@ -745,6 +746,7 @@ func (w *Worker) GetAddress(address string, page int, txsOnPage int, option Acco
 				}
 			}
 		}
+		glog.Infof("done get all txm, address:[%s]", address)
 	}
 	// get tx history if requested by option or check mempool if there are some transactions for a new address
 	if option >= AccountDetailsTxidHistory {
@@ -765,6 +767,7 @@ func (w *Worker) GetAddress(address string, page int, txsOnPage int, option Acco
 				pg, _, _, _ = computePaging(totalResults, page, txsOnPage)
 			}
 		}
+		glog.Infof("done getbestheight, bestheight:[%b]", bestheight)
 		if option == AccountDetailsTxidHistory {
 			for i := from; i < to; i++ {
 				txid := txc[i]
@@ -804,6 +807,7 @@ func (w *Worker) GetAddress(address string, page int, txsOnPage int, option Acco
 			wg.Wait()
 			sort.Sort(SortTx(txs))
 		}
+		glog.Info("done get all txc info")
 	}
 	if w.chainType == bchain.ChainBitcoinType {
 		totalReceived = ba.ReceivedSat()
