@@ -1,7 +1,6 @@
 package bchain
 
 import (
-	"github.com/golang/glog"
 	"sort"
 	"sync"
 )
@@ -42,16 +41,14 @@ func (m *BaseMempool) GetTransactions(address string) ([]Outpoint, error) {
 
 // GetAddrDescTransactions returns slice of mempool transactions for given address descriptor, in reverse order
 func (m *BaseMempool) GetAddrDescTransactions(addrDesc AddressDescriptor) ([]Outpoint, error) {
-	glog.Infof("addrDesc:[%s], GetAddrDescTransactions, m.mux.Lock()", addrDesc.String())
-	m.mux.Lock()
-	defer m.mux.Unlock()
+	//m.mux.Lock()
+	//defer m.mux.Unlock()
 	outpoints := m.addrDescToTx[string(addrDesc)]
 	rv := make([]Outpoint, len(outpoints))
 	for i, j := len(outpoints)-1, 0; i >= 0; i-- {
 		rv[j] = outpoints[i]
 		j++
 	}
-	glog.Infof("addrDesc:[%s], GetAddrDescTransactions, m.mux.Unlock() return rv", addrDesc.String())
 	return rv, nil
 }
 
