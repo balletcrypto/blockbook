@@ -789,7 +789,7 @@ func (w *Worker) GetAddress(address string, page int, txsOnPage int, option Acco
 			for i := from; i < to; i++ {
 				txid := txc[i]
 				go func(txid string) {
-					tx, err := w.txFromTxid(txid, bestheight, AccountDetailsTxHistoryLight, nil)
+					tx, err := w.txFromTxid(txid, bestheight, option, nil)
 					if err != nil {
 						glog.Error(err.Error())
 					} else {
