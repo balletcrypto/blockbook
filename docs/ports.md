@@ -26,6 +26,7 @@
 | Koto                 | 9051                    | 9151                  | 8051             | 38351                       |
 | Bellcoin             | 9052                    | 9152                  | 8052             | 38352                       |
 | NULS                 | 9053                    | 9153                  | 8053             | 38353                       |
+| Bitcore              | 9054                    | 9154                  | 8054             | 38354                       |
 | Viacoin              | 9055                    | 9155                  | 8055             | 38355                       |
 | VIPSTARCOIN          | 9056                    | 9156                  | 8056             | 38356                       |
 | MonetaryUnit         | 9057                    | 9157                  | 8057             | 38357                       |
@@ -40,6 +41,7 @@
 | CPUchain             | 9090                    | 9190                  | 8090             | 38390                       |
 | DeepOnion            | 9091                    | 9191                  | 8091             | 38391                       |
 | Unobtanium           | 9092                    | 9192                  | 65535            | 38392                       |
+| Omotenashicoin       | 9094                    | 9194                  | 8094             | 38394                       |
 | Bitcoin Testnet      | 19030                   | 19130                 | 18030            | 48330                       |
 | Bitcoin Cash Testnet | 19031                   | 19131                 | 18031            | 48331                       |
 | Zcash Testnet        | 19032                   | 19132                 | 18032            | 48332                       |
@@ -54,5 +56,6 @@
 | Decred Testnet       | 19061                   | 19161                 | 18061            | 48361                       |
 | Flo Testnet          | 19066                   | 19166                 | 18066            | 48366                       |
 | Qtum Testnet         | 19088                   | 19188                 | 18088            | 48388                       |
+| OmotenashicoinTestnet| 19089                   | 19189                 | 18089            | 48389                       |
 
 > NOTE: This document is generated from coin definitions in `configs/coins`.
