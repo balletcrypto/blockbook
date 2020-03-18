@@ -186,7 +186,7 @@ func mainWithExitCode() int {
 	}
 
 	// fix possible inconsistencies in the UTXO index
-	if *fixUtxo || !internalState.UtxoChecked {
+	if *fixUtxo && !internalState.UtxoChecked {
 		err = index.FixUtxos(chanOsSignal)
 		if err != nil {
 			glog.Error("fixUtxos: ", err)
