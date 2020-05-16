@@ -186,9 +186,7 @@ func (w *SyncWorker) connectBlocks(onNewBlock bchain.OnNewBlockFunc, initialSync
 		if res.err != nil {
 			return res.err
 		}
-		glog.Infof("---- w.db.ConnectBlock(res.block), block_hash:%v ----", res.block.Hash)
 		err := w.db.ConnectBlock(res.block)
-		glog.Infof("---- done w.db.ConnectBlock(res.block), block_hash:%v ----", res.block.Hash)
 		if err != nil {
 			return err
 		}

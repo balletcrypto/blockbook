@@ -91,39 +91,22 @@ func (b *BCashRPC) GetBlock(hash string, height uint32) (*bchain.Block, error) {
 			return nil, err
 		}
 	}
-	glog.V(1).Info("rpc: getblock (verbosity=1) ", hash)
-
-	res := btc.ResGetBlockThin{}
-	req := btc.CmdGetBlock{Method: "getblock"}
-	req.Params.BlockHash = hash
-	req.Params.Verbosity = 1
-	err = b.Call(&req, &res)
-
+	header, err := b.GetBlockHeader(hash)
+	if err != nil {
+		return nil, err
+	}
+	data, err := b.GetBlockRaw(hash)
+	if err != nil {
+		return nil, err
+	}
+	block, err := b.Parser.ParseBlock(data)
 	if err != nil {
 		return nil, errors.Annotatef(err, "hash %v", hash)
 	}
-	if res.Error != nil {
-		return nil, errors.Annotatef(res.Error, "hash %v", hash)
-	}
-
-	txs := make([]bchain.Tx, 0, len(res.Result.Txids))
-	glog.Infof("---- collect all tx, block_hash:%v ----", hash)
-	for _, txid := range res.Result.Txids {
-		tx, err := b.GetTransaction(txid)
-		if err != nil {
-			if err == bchain.ErrTxNotFound {
-				glog.Errorf("rpc: getblock: skipping transaction in block %s due to error: %s", hash, err)
-				continue
-			}
-			return nil, err
-		}
-		txs = append(txs, *tx)
-	}
-	glog.Infof("---- done collect all tx, block_hash:%v ----", hash)
-	block := &bchain.Block{
-		BlockHeader: res.Result.BlockHeader,
-		Txs:         txs,
-	}
+	// size is not returned by GetBlockHeader and would be overwritten
+	size := block.Size
+	block.BlockHeader = *header
+	block.Size = size
 	return block, nil
 }
 
