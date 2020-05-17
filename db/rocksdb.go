@@ -500,7 +500,7 @@ type txIndexes struct {
 // addressesMap is a map of addresses in a block
 // each address contains a slice of transactions with indexes where the address appears
 // slice is used instead of map so that order is defined and also search in case of few items
-type addressesMap map[string][]txIndexes
+type addressesMap map[string]map[string]txIndexes
 
 type outpoint struct {
 	btxID []byte
@@ -829,30 +829,41 @@ func (d *RocksDB) processAddressesBitcoinType(block *bchain.Block, addresses add
 func addToAddressesMap(addresses addressesMap, strAddrDesc string, btxID []byte, index int32) bool {
 	// check that the address was already processed in this block
 	// if not found, it has certainly not been counted
-	at, found := addresses[strAddrDesc]
+	_, found := addresses[strAddrDesc][string(btxID)]
 	if found {
 		// if the tx is already in the slice, append the index to the array of indexes
-		for i, t := range at {
-			if bytes.Equal(btxID, t.btxID) {
-				at[i].indexes = append(t.indexes, index)
-				return true
-			}
-		}
+		a := addresses[strAddrDesc][string(btxID)]
+		a.indexes = append(a.indexes, index)
+		return true
 	}
-	addresses[strAddrDesc] = append(at, txIndexes{
-		btxID:   btxID,
-		indexes: []int32{index},
-	})
+	btxIdTxIndexesMap, found := addresses[strAddrDesc]
+	if found {
+		btxIdTxIndexesMap[string(btxID)] = txIndexes{
+			btxID:   btxID,
+			indexes: []int32{index},
+		}
+	} else {
+		addresses[strAddrDesc] = map[string]txIndexes{string(btxID): {
+			btxID:   btxID,
+			indexes: []int32{index},
+		}}
+	}
+
 	return false
 }
 
 func (d *RocksDB) storeAddresses(wb *gorocksdb.WriteBatch, height uint32, addresses addressesMap) error {
-	for addrDesc, txi := range addresses {
+	for addrDesc, btxIdIndexesMap := range addresses {
+		var txi []txIndexes
+		for _, txIndexesValue := range btxIdIndexesMap {
+			txi = append(txi, txIndexesValue)
+		}
 		ba := bchain.AddressDescriptor(addrDesc)
 		key := packAddressKey(ba, height)
 		val := d.packTxIndexes(txi)
 		wb.PutCF(d.cfh[cfAddresses], key, val)
 	}
+
 	return nil
 }
 
