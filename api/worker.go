@@ -14,7 +14,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/golang/glog"
@@ -774,38 +773,14 @@ func (w *Worker) GetAddress(address string, page int, txsOnPage int, option Acco
 				txids = append(txids, txid)
 			}
 		} else {
-			//for i := from; i < to; i++ {
-			//	txid := txc[i]
-			//	tx, err := w.txFromTxid(txid, bestheight, option, nil)
-			//	if err != nil {
-			//		return nil, err
-			//	}
-			//	txs = append(txs, tx)
-			//}
-			lenTxs := to - from
-			var wg sync.WaitGroup
-			wg.Add(lenTxs)
-			queue := make(chan *Tx, 1)
 			for i := from; i < to; i++ {
 				txid := txc[i]
-				go func(txid string) {
-					tx, err := w.txFromTxid(txid, bestheight, option, nil)
-					if err != nil {
-						glog.Error(err.Error())
-					} else {
-						//txs = append(txs, tx)
-						queue <- tx
-					}
-				}(txid)
-			}
-			go func() {
-				for t := range queue {
-					txs = append(txs, t)
-					wg.Done()
+				tx, err := w.txFromTxid(txid, bestheight, option, nil)
+				if err != nil {
+					return nil, err
 				}
-			}()
-			wg.Wait()
-			sort.Sort(SortTx(txs))
+				txs = append(txs, tx)
+			}
 		}
 	}
 	if w.chainType == bchain.ChainBitcoinType {
