@@ -1,14 +1,14 @@
 package bcd
 
 import (
-	"blockbook/bchain"
-	"blockbook/bchain/coins/btc"
 	"bytes"
 	"encoding/binary"
 	"encoding/hex"
 	"github.com/bsm/go-vlq"
 	"github.com/martinboehm/btcd/wire"
 	"github.com/martinboehm/btcutil/chaincfg"
+	"github.com/trezor/blockbook/bchain"
+	"github.com/trezor/blockbook/bchain/coins/btc"
 	"io"
 )
 

@@ -1,13 +1,6 @@
 package main
 
 import (
-	"blockbook/api"
-	"blockbook/bchain"
-	"blockbook/bchain/coins"
-	"blockbook/common"
-	"blockbook/db"
-	"blockbook/fiat"
-	"blockbook/server"
 	"context"
 	"encoding/json"
 	"flag"
@@ -26,6 +19,13 @@ import (
 
 	"github.com/golang/glog"
 	"github.com/juju/errors"
+	"github.com/trezor/blockbook/api"
+	"github.com/trezor/blockbook/bchain"
+	"github.com/trezor/blockbook/bchain/coins"
+	"github.com/trezor/blockbook/common"
+	"github.com/trezor/blockbook/db"
+	"github.com/trezor/blockbook/fiat"
+	"github.com/trezor/blockbook/server"
 )
 
 // debounce too close requests for resync
@@ -100,6 +100,7 @@ var (
 	internalState                 *common.InternalState
 	callbacksOnNewBlock           []bchain.OnNewBlockFunc
 	callbacksOnNewTxAddr          []bchain.OnNewTxAddrFunc
+	callbacksOnNewTx              []bchain.OnNewTxFunc
 	callbacksOnNewFiatRatesTicker []fiat.OnNewFiatRatesTicker
 	chanOsSignal                  chan os.Signal
 	inShutdown                    int32
@@ -298,7 +299,7 @@ func mainWithExitCode() int {
 		if chain.GetChainParser().GetChainType() == bchain.ChainBitcoinType {
 			addrDescForOutpoint = index.AddrDescForOutpoint
 		}
-		err = chain.InitializeMempool(addrDescForOutpoint, onNewTxAddr)
+		err = chain.InitializeMempool(addrDescForOutpoint, onNewTxAddr, onNewTx)
 		if err != nil {
 			glog.Error("initializeMempool ", err)
 			return exitCodeFatal
@@ -319,6 +320,7 @@ func mainWithExitCode() int {
 		// start full public interface
 		callbacksOnNewBlock = append(callbacksOnNewBlock, publicServer.OnNewBlock)
 		callbacksOnNewTxAddr = append(callbacksOnNewTxAddr, publicServer.OnNewTxAddr)
+		callbacksOnNewTx = append(callbacksOnNewTx, publicServer.OnNewTx)
 		callbacksOnNewFiatRatesTicker = append(callbacksOnNewFiatRatesTicker, publicServer.OnNewFiatRatesTicker)
 		publicServer.ConnectFullPublicInterface()
 	}
@@ -543,12 +545,22 @@ func syncIndexLoop() {
 }
 
 func onNewBlockHash(hash string, height uint32) {
+	defer func() {
+		if r := recover(); r != nil {
+			glog.Error("onNewBlockHash recovered from panic: ", r)
+		}
+	}()
 	for _, c := range callbacksOnNewBlock {
 		c(hash, height)
 	}
 }
 
 func onNewFiatRatesTicker(ticker *db.CurrencyRatesTicker) {
+	defer func() {
+		if r := recover(); r != nil {
+			glog.Error("onNewFiatRatesTicker recovered from panic: ", r)
+		}
+	}()
 	for _, c := range callbacksOnNewFiatRatesTicker {
 		c(ticker)
 	}
@@ -616,8 +628,24 @@ func storeInternalStateLoop() {
 }
 
 func onNewTxAddr(tx *bchain.Tx, desc bchain.AddressDescriptor) {
+	defer func() {
+		if r := recover(); r != nil {
+			glog.Error("onNewTxAddr recovered from panic: ", r)
+		}
+	}()
 	for _, c := range callbacksOnNewTxAddr {
 		c(tx, desc)
+	}
+}
+
+func onNewTx(tx *bchain.MempoolTx) {
+	defer func() {
+		if r := recover(); r != nil {
+			glog.Error("onNewTx recovered from panic: ", r)
+		}
+	}()
+	for _, c := range callbacksOnNewTx {
+		c(tx)
 	}
 }
 

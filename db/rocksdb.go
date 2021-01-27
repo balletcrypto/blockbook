@@ -1,8 +1,6 @@
 package db
 
 import (
-	"blockbook/bchain"
-	"blockbook/common"
 	"bytes"
 	"encoding/binary"
 	"encoding/hex"
@@ -20,6 +18,8 @@ import (
 	"github.com/golang/glog"
 	"github.com/juju/errors"
 	"github.com/tecbot/gorocksdb"
+	"github.com/trezor/blockbook/bchain"
+	"github.com/trezor/blockbook/common"
 )
 
 const dbVersion = 5
@@ -157,7 +157,7 @@ func NewRocksDB(path string, cacheSize, maxOpenFiles int, parser bchain.BlockCha
 		return nil, errors.New("Unknown chain type")
 	}
 
-	c := gorocksdb.NewLRUCache(cacheSize)
+	c := gorocksdb.NewLRUCache(uint64(cacheSize))
 	db, cfh, err := openDB(path, c, maxOpenFiles)
 	if err != nil {
 		return nil, err
@@ -308,17 +308,17 @@ func (d *RocksDB) Reopen() error {
 	return nil
 }
 
-func atoi(s string) int {
+func atoUint64(s string) uint64 {
 	i, err := strconv.Atoi(s)
 	if err != nil {
 		return 0
 	}
-	return i
+	return uint64(i)
 }
 
 // GetMemoryStats returns memory usage statistics as reported by RocksDB
 func (d *RocksDB) GetMemoryStats() string {
-	var total, indexAndFilter, memtable int
+	var total, indexAndFilter, memtable uint64
 	type columnStats struct {
 		name           string
 		indexAndFilter string
@@ -329,12 +329,12 @@ func (d *RocksDB) GetMemoryStats() string {
 		cs[i].name = cfNames[i]
 		cs[i].indexAndFilter = d.db.GetPropertyCF("rocksdb.estimate-table-readers-mem", d.cfh[i])
 		cs[i].memtable = d.db.GetPropertyCF("rocksdb.cur-size-all-mem-tables", d.cfh[i])
-		indexAndFilter += atoi(cs[i].indexAndFilter)
-		memtable += atoi(cs[i].memtable)
+		indexAndFilter += atoUint64(cs[i].indexAndFilter)
+		memtable += atoUint64(cs[i].memtable)
 	}
 	m := struct {
-		cacheUsage       int
-		pinnedCacheUsage int
+		cacheUsage       uint64
+		pinnedCacheUsage uint64
 		columns          []columnStats
 	}{
 		cacheUsage:       d.cache.GetUsage(),
@@ -1027,23 +1027,23 @@ func (d *RocksDB) GetTxAddresses(txid string) (*TxAddresses, error) {
 	return d.getTxAddresses(btxID)
 }
 
-// AddrDescForOutpoint defines function that returns address descriptorfor given outpoint or nil if outpoint not found
-func (d *RocksDB) AddrDescForOutpoint(outpoint bchain.Outpoint) bchain.AddressDescriptor {
+// AddrDescForOutpoint is a function that returns address descriptor and value for given outpoint or nil if outpoint not found
+func (d *RocksDB) AddrDescForOutpoint(outpoint bchain.Outpoint) (bchain.AddressDescriptor, *big.Int) {
 	ta, err := d.GetTxAddresses(outpoint.Txid)
 	if err != nil || ta == nil {
-		return nil
+		return nil, nil
 	}
 	if outpoint.Vout < 0 {
 		vin := ^outpoint.Vout
 		if len(ta.Inputs) <= int(vin) {
-			return nil
+			return nil, nil
 		}
-		return ta.Inputs[vin].AddrDesc
+		return ta.Inputs[vin].AddrDesc, &ta.Inputs[vin].ValueSat
 	}
 	if len(ta.Outputs) <= int(outpoint.Vout) {
-		return nil
+		return nil, nil
 	}
-	return ta.Outputs[outpoint.Vout].AddrDesc
+	return ta.Outputs[outpoint.Vout].AddrDesc, &ta.Outputs[outpoint.Vout].ValueSat
 }
 
 func packTxAddresses(ta *TxAddresses, buf []byte, varBuf []byte) []byte {

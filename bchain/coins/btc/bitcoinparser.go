@@ -1,7 +1,6 @@
 package btc
 
 import (
-	"blockbook/bchain"
 	"bytes"
 	"encoding/binary"
 	"encoding/hex"
@@ -16,7 +15,24 @@ import (
 	"github.com/martinboehm/btcutil/chaincfg"
 	"github.com/martinboehm/btcutil/hdkeychain"
 	"github.com/martinboehm/btcutil/txscript"
+	"github.com/trezor/blockbook/bchain"
 )
+
+// temp params for signet(wait btcd commit)
+// magic numbers
+const (
+	SignetMagic wire.BitcoinNet = 0x6a70c7f0
+)
+
+// chain parameters
+var (
+	SigNetParams chaincfg.Params
+)
+
+func init() {
+	SigNetParams = chaincfg.TestNet3Params
+	SigNetParams.Net = SignetMagic
+}
 
 // OutputScriptToAddressesFunc converts ScriptPubKey to bitcoin addresses
 type OutputScriptToAddressesFunc func(script []byte) ([]string, bool, error)
@@ -63,6 +79,8 @@ func GetChainParams(chain string) *chaincfg.Params {
 		return &chaincfg.TestNet3Params
 	case "regtest":
 		return &chaincfg.RegressionNetParams
+	case "signet":
+		return &SigNetParams
 	}
 	return &chaincfg.MainNetParams
 }

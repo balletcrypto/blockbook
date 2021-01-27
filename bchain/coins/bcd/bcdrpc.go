@@ -1,11 +1,11 @@
 package bcd
 
 import (
-	"blockbook/bchain"
-	"blockbook/bchain/coins/btc"
 	"encoding/json"
 	"github.com/golang/glog"
 	"github.com/martinboehm/btcd/wire"
+	"github.com/trezor/blockbook/bchain"
+	"github.com/trezor/blockbook/bchain/coins/btc"
 )
 
 const bitcoinDiamondForkHeight = 495866
