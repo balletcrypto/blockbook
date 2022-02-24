@@ -1,43 +1,51 @@
-FROM golang:1.15.7 as builder
+FROM golang:1.17.1 as builder
 
 LABEL MAINTAINER="Andy Wang <andy.wang@mintery.com>"
 
 RUN apt-get update && \
-   apt-get upgrade -y && \
-   apt-get install -y git wget && \
-   apt-get install -y libzmq3-dev libgflags-dev libsnappy-dev zlib1g-dev libbz2-dev liblz4-dev
+    apt-get upgrade -y && \
+    apt-get install -y build-essential git wget pkg-config lxc-dev libzmq3-dev \
+                       libgflags-dev libsnappy-dev zlib1g-dev libbz2-dev \
+                       liblz4-dev graphviz && \
+    apt-get clean
 
-ENV ROCKSDB_VERSION=v6.13.3
+ENV ROCKSDB_VERSION=v6.22.1
 ENV CGO_CFLAGS="-I/opt/rocksdb/include"
-ENV CGO_LDFLAGS="-L/opt/rocksdb -lrocksdb -lstdc++ -lm -lz -lbz2 -lsnappy -llz4"
+ENV CGO_LDFLAGS="-L/opt/rocksdb -lrocksdb -lstdc++ -lm -lz -ldl -lbz2 -lsnappy -llz4"
 
+RUN mkdir /build
 # install rocksdb https://github.com/facebook/rocksdb/blob/master/INSTALL.md
 RUN cd /opt && git clone -b $ROCKSDB_VERSION --depth 1 https://github.com/facebook/rocksdb.git && \
     cd /opt/rocksdb && \
-    CFLAGS=-fPIC CXXFLAGS=-fPIC make -j 2 static_lib
+    CFLAGS=-fPIC CXXFLAGS=-fPIC make -j 4 release
+
+RUN strip /opt/rocksdb/ldb /opt/rocksdb/sst_dump && \
+    cp /opt/rocksdb/ldb /opt/rocksdb/sst_dump /build
+
 
 WORKDIR /build
 
-COPY go.* ./
-
+COPY . ./
 RUN go mod download
 
-COPY . ./
 
-RUN go build -mod=readonly -v -o blockbook
+RUN go build -mod=readonly -tags rocksdb_6_16 -v -o blockbook
 
 ####### Start a new stage from debian #######
-FROM debian:buster-slim
+#FROM debian:buster-slim
+FROM debian:bullseye
 
 RUN apt-get update && \
     apt-get upgrade -y && \
-    apt-get install -y libgflags-dev libsnappy-dev zlib1g-dev libbz2-dev liblz4-dev libzmq3-dev
+    apt-get install -y build-essential git wget pkg-config lxc-dev libzmq3-dev \
+                       libgflags-dev libsnappy-dev zlib1g-dev libbz2-dev \
+                       liblz4-dev graphviz && \
+    apt-get clean
 
 WORKDIR /blockbook
 
 COPY --from=builder /build/blockbook /blockbook/bin/
 COPY --from=builder /build/static /blockbook/static/
-COPY --from=builder /build/build/text/ /build/build/text/
 
 EXPOSE 9034
 EXPOSE 9134
