@@ -36,6 +36,9 @@ type Worker struct {
 	metrics           *common.Metrics
 }
 
+// contractInfoCache is a temporary cache of contract information for ethereum token transfers
+type contractInfoCache = map[string]*bchain.ContractInfo
+
 // NewWorker creates new api worker
 func NewWorker(db *db.RocksDB, chain bchain.BlockChain, mempool bchain.Mempool, txCache *db.TxCache, metrics *common.Metrics, is *common.InternalState, fiatRates *fiat.FiatRates) (*Worker, error) {
 	w := &Worker{
@@ -426,18 +429,25 @@ func (w *Worker) getTransactionFromBchainTx(bchainTx *bchain.Tx, height int, spe
 		// mempool txs do not have fees yet
 		if ethTxData.GasUsed != nil {
 			feesSat.Mul(ethTxData.GasPrice, ethTxData.GasUsed)
+			if ethTxData.L1Fee != nil {
+				feesSat.Add(&feesSat, ethTxData.L1Fee)
+			}
 		}
 		if len(bchainTx.Vout) > 0 {
 			valOutSat = bchainTx.Vout[0].ValueSat
 		}
 		ethSpecific = &EthereumSpecific{
-			GasLimit:   ethTxData.GasLimit,
-			GasPrice:   (*Amount)(ethTxData.GasPrice),
-			GasUsed:    ethTxData.GasUsed,
-			Nonce:      ethTxData.Nonce,
-			Status:     ethTxData.Status,
-			Data:       ethTxData.Data,
-			ParsedData: parsedInputData,
+			GasLimit:    ethTxData.GasLimit,
+			GasPrice:    (*Amount)(ethTxData.GasPrice),
+			GasUsed:     ethTxData.GasUsed,
+			L1Fee:       ethTxData.L1Fee,
+			L1FeeScalar: ethTxData.L1FeeScalar,
+			L1GasPrice:  (*Amount)(ethTxData.L1GasPrice),
+			L1GasUsed:   ethTxData.L1GasUsed,
+			Nonce:       ethTxData.Nonce,
+			Status:      ethTxData.Status,
+			Data:        ethTxData.Data,
+			ParsedData:  parsedInputData,
 		}
 		if internalData != nil {
 			ethSpecific.Type = internalData.Type
@@ -666,39 +676,49 @@ func (w *Worker) getContractDescriptorInfo(cd bchain.AddressDescriptor, typeFrom
 }
 
 func (w *Worker) getEthereumTokensTransfers(transfers bchain.TokenTransfers, addresses map[string]struct{}) []TokenTransfer {
-	sort.Sort(transfers)
 	tokens := make([]TokenTransfer, len(transfers))
-	for i := range transfers {
-		t := transfers[i]
-		typeName := bchain.EthereumTokenTypeMap[t.Type]
-		contractInfo, _, err := w.getContractInfo(t.Contract, typeName)
-		if err != nil {
-			glog.Errorf("getContractInfo error %v, contract %v", err, t.Contract)
-			continue
-		}
-		var value *Amount
-		var values []MultiTokenValue
-		if t.Type == bchain.MultiToken {
-			values = make([]MultiTokenValue, len(t.MultiTokenValues))
-			for j := range values {
-				values[j].Id = (*Amount)(&t.MultiTokenValues[j].Id)
-				values[j].Value = (*Amount)(&t.MultiTokenValues[j].Value)
+	if len(transfers) > 0 {
+		sort.Sort(transfers)
+		contractCache := make(contractInfoCache)
+		for i := range transfers {
+			t := transfers[i]
+			typeName := bchain.EthereumTokenTypeMap[t.Type]
+			var contractInfo *bchain.ContractInfo
+			if info, ok := contractCache[t.Contract]; ok {
+				contractInfo = info
+			} else {
+				info, _, err := w.getContractInfo(t.Contract, typeName)
+				if err != nil {
+					glog.Errorf("getContractInfo error %v, contract %v", err, t.Contract)
+					continue
+				}
+				contractInfo = info
+				contractCache[t.Contract] = info
 			}
-		} else {
-			value = (*Amount)(&t.Value)
-		}
-		aggregateAddress(addresses, t.From)
-		aggregateAddress(addresses, t.To)
-		tokens[i] = TokenTransfer{
-			Type:             typeName,
-			Contract:         t.Contract,
-			From:             t.From,
-			To:               t.To,
-			Value:            value,
-			MultiTokenValues: values,
-			Decimals:         contractInfo.Decimals,
-			Name:             contractInfo.Name,
-			Symbol:           contractInfo.Symbol,
+			var value *Amount
+			var values []MultiTokenValue
+			if t.Type == bchain.MultiToken {
+				values = make([]MultiTokenValue, len(t.MultiTokenValues))
+				for j := range values {
+					values[j].Id = (*Amount)(&t.MultiTokenValues[j].Id)
+					values[j].Value = (*Amount)(&t.MultiTokenValues[j].Value)
+				}
+			} else {
+				value = (*Amount)(&t.Value)
+			}
+			aggregateAddress(addresses, t.From)
+			aggregateAddress(addresses, t.To)
+			tokens[i] = TokenTransfer{
+				Type:             typeName,
+				Contract:         t.Contract,
+				From:             t.From,
+				To:               t.To,
+				Value:            value,
+				MultiTokenValues: values,
+				Decimals:         contractInfo.Decimals,
+				Name:             contractInfo.Name,
+				Symbol:           contractInfo.Symbol,
+			}
 		}
 	}
 	return tokens
@@ -1045,6 +1065,7 @@ type ethereumTypeAddressData struct {
 	totalResults         int
 	tokensBaseValue      float64
 	tokensSecondaryValue float64
+	stakingPools         []StakingPool
 }
 
 func (w *Worker) getEthereumTypeAddressBalances(addrDesc bchain.AddressDescriptor, details AccountDetails, filter *AddressFilter, secondaryCoin string) (*db.AddrBalance, *ethereumTypeAddressData, error) {
@@ -1144,7 +1165,39 @@ func (w *Worker) getEthereumTypeAddressBalances(addrDesc bchain.AddressDescripto
 		filter.Vout = AddressFilterVoutQueryNotNecessary
 		d.totalResults = -1
 	}
+	// if staking pool enabled, fetch the staking pool details
+	if details >= AccountDetailsTokenBalances {
+		d.stakingPools, err = w.getStakingPoolsData(addrDesc)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
 	return ba, &d, nil
+}
+
+func (w *Worker) getStakingPoolsData(addrDesc bchain.AddressDescriptor) ([]StakingPool, error) {
+	var pools []StakingPool
+	if len(w.chain.EthereumTypeGetSupportedStakingPools()) > 0 {
+		sp, err := w.chain.EthereumTypeGetStakingPoolsData(addrDesc)
+		if err != nil {
+			return nil, err
+		}
+		for i := range sp {
+			p := &sp[i]
+			pools = append(pools, StakingPool{
+				Contract:                p.Contract,
+				Name:                    p.Name,
+				PendingBalance:          (*Amount)(&p.PendingBalance),
+				PendingDepositedBalance: (*Amount)(&p.PendingDepositedBalance),
+				DepositedBalance:        (*Amount)(&p.DepositedBalance),
+				WithdrawTotalAmount:     (*Amount)(&p.WithdrawTotalAmount),
+				ClaimableAmount:         (*Amount)(&p.ClaimableAmount),
+				RestakedReward:          (*Amount)(&p.RestakedReward),
+				AutocompoundBalance:     (*Amount)(&p.AutocompoundBalance),
+			})
+		}
+	}
+	return pools, nil
 }
 
 func (w *Worker) txFromTxid(txid string, bestHeight uint32, option AccountDetails, blockInfo *db.BlockInfo, addresses map[string]struct{}) (*Tx, error) {
@@ -1388,12 +1441,13 @@ func (w *Worker) GetAddress(address string, page int, txsOnPage int, option Acco
 		ContractInfo:          ed.contractInfo,
 		Nonce:                 ed.nonce,
 		AddressAliases:        w.getAddressAliases(addresses),
+		StakingPools:          ed.stakingPools,
 	}
 	// keep address backward compatible, set deprecated Erc20Contract value if ERC20 token
 	if ed.contractInfo != nil && ed.contractInfo.Type == bchain.ERC20TokenType {
 		r.Erc20Contract = ed.contractInfo
 	}
-	glog.Info("GetAddress ", address, ", ", time.Since(start))
+	glog.Info("GetAddress-", option, " ", address, ", ", time.Since(start))
 	return r, nil
 }
 
@@ -1602,6 +1656,17 @@ func (w *Worker) GetBalanceHistory(address string, fromTimestamp, toTimestamp in
 	addrDesc, _, err := w.getAddrDescAndNormalizeAddress(address)
 	if err != nil {
 		return nil, err
+	}
+	// do not get balance history for contracts
+	if w.chainType == bchain.ChainEthereumType {
+		ci, err := w.db.GetContractInfo(addrDesc, bchain.UnknownTokenType)
+		if err != nil {
+			return nil, err
+		}
+		if ci != nil {
+			glog.Info("GetBalanceHistory ", address, " is a contract, skipping")
+			return nil, NewAPIError("GetBalanceHistory for a contract not allowed", true)
+		}
 	}
 	fromUnix, fromHeight, toUnix, toHeight := w.balanceHistoryHeightsFromTo(fromTimestamp, toTimestamp)
 	if fromHeight >= toHeight {
@@ -1880,7 +1945,11 @@ func (w *Worker) GetCurrentFiatRates(currencies []string, token string) (*FiatTi
 	ticker := w.fiatRates.GetCurrentTicker(vsCurrency, token)
 	var err error
 	if ticker == nil {
-		ticker, err = w.db.FiatRatesFindLastTicker(vsCurrency, token)
+		if token == "" {
+			// fallback - get last fiat rate from db if not in current ticker
+			// not for tokens, many tokens do not have fiat rates at all and it is very costly to do DB search for token without an exchange rate
+			ticker, err = w.db.FiatRatesFindLastTicker(vsCurrency, token)
+		}
 		if err != nil {
 			return nil, NewAPIError(fmt.Sprintf("Error finding ticker: %v", err), false)
 		} else if ticker == nil {
@@ -2200,6 +2269,48 @@ func (w *Worker) GetBlockRaw(bid string) (*BlockRaw, error) {
 	return &BlockRaw{Hex: hex}, err
 }
 
+// GetBlockFiltersBatch returns array of block filter data in the format ["height:hash:filter",...] if blocks greater than bestKnownBlockHash
+func (w *Worker) GetBlockFiltersBatch(bestKnownBlockHash string, pageSize int) ([]string, error) {
+	if w.is.BlockGolombFilterP == 0 {
+		return nil, NewAPIError("Not supported", true)
+	}
+	if pageSize > 10000 {
+		return nil, NewAPIError("pageSize max 10000", true)
+	}
+	if pageSize <= 0 {
+		pageSize = 1000
+	}
+	bi, err := w.chain.GetBlockInfo(bestKnownBlockHash)
+	if err != nil {
+		return nil, err
+	}
+	bestHeight, _, err := w.db.GetBestBlock()
+	if err != nil {
+		return nil, err
+	}
+	from := bi.Height + 1
+	to := bestHeight + 1
+	if from >= to {
+		return []string{}, nil
+	}
+	if to-from > uint32(pageSize) {
+		to = from + uint32(pageSize)
+	}
+	r := make([]string, 0, to-from)
+	for i := from; i < to; i++ {
+		blockHash, err := w.db.GetBlockHash(uint32(i))
+		if err != nil {
+			return nil, err
+		}
+		blockFilter, err := w.db.GetBlockFilter(blockHash)
+		if err != nil {
+			return nil, err
+		}
+		r = append(r, fmt.Sprintf("%d:%s:%s", i, blockHash, blockFilter))
+	}
+	return r, err
+}
+
 // ComputeFeeStats computes fee distribution in defined blocks and logs them to log
 func (w *Worker) ComputeFeeStats(blockFrom, blockTo int, stopCompute chan os.Signal) error {
 	bestheight, _, err := w.db.GetBestBlock()
@@ -2302,6 +2413,7 @@ func (w *Worker) GetSystemInfo(internal bool) (*SystemInfo, error) {
 	}
 	blockbookInfo := &BlockbookInfo{
 		Coin:                         w.is.Coin,
+		Network:                      w.is.GetNetwork(),
 		Host:                         w.is.Host,
 		Version:                      vi.Version,
 		GitCommit:                    vi.GitCommit,
@@ -2320,6 +2432,7 @@ func (w *Worker) GetSystemInfo(internal bool) (*SystemInfo, error) {
 		CurrentFiatRatesTime:         nonZeroTime(currentFiatRatesTime),
 		HistoricalFiatRatesTime:      nonZeroTime(w.is.HistoricalFiatRatesTime),
 		HistoricalTokenFiatRatesTime: nonZeroTime(w.is.HistoricalTokenFiatRatesTime),
+		SupportedStakingPools:        w.chain.EthereumTypeGetSupportedStakingPools(),
 		DbSize:                       w.db.DatabaseSizeOnDisk(),
 		DbSizeFromColumns:            internalDBSize,
 		DbColumns:                    columnStats,
