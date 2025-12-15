@@ -39,6 +39,11 @@ func (b *BaseChain) GetMempoolEntry(txid string) (*MempoolEntry, error) {
 	return nil, errors.New("GetMempoolEntry: not supported")
 }
 
+// LongTermFeeRate returns smallest fee rate from historic blocks.
+func (b *BaseChain) LongTermFeeRate() (*LongTermFeeRate, error) {
+	return nil, errors.New("not supported")
+}
+
 // EthereumTypeGetBalance is not supported
 func (b *BaseChain) EthereumTypeGetBalance(addrDesc AddressDescriptor) (*big.Int, error) {
 	return nil, errors.New("not supported")
@@ -54,6 +59,11 @@ func (b *BaseChain) EthereumTypeEstimateGas(params map[string]interface{}) (uint
 	return 0, errors.New("not supported")
 }
 
+// EthereumTypeGetEip1559Fees is not supported
+func (b *BaseChain) EthereumTypeGetEip1559Fees() (*Eip1559Fees, error) {
+	return nil, errors.New("not supported")
+}
+
 // GetContractInfo is not supported
 func (b *BaseChain) GetContractInfo(contractDesc AddressDescriptor) (*ContractInfo, error) {
 	return nil, errors.New("not supported")
@@ -64,7 +74,7 @@ func (b *BaseChain) EthereumTypeGetErc20ContractBalance(addrDesc, contractDesc A
 	return nil, errors.New("not supported")
 }
 
-// GetContractInfo returns URI of non fungible or multi token defined by token id
+// GetTokenURI returns URI of non fungible or multi token defined by token id
 func (p *BaseChain) GetTokenURI(contractDesc AddressDescriptor, tokenID *big.Int) (string, error) {
 	return "", errors.New("not supported")
 }
@@ -79,5 +89,9 @@ func (b *BaseChain) EthereumTypeGetStakingPoolsData(addrDesc AddressDescriptor) 
 
 // EthereumTypeRpcCall calls eth_call with given data and to address
 func (b *BaseChain) EthereumTypeRpcCall(data, to, from string) (string, error) {
+	return "", errors.New("not supported")
+}
+
+func (b *BaseChain) EthereumTypeGetRawTransaction(txid string) (string, error) {
 	return "", errors.New("not supported")
 }

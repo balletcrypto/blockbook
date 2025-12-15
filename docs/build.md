@@ -191,7 +191,7 @@ like macOS or Windows, please adapt the instructions to your target system.
 Setup go environment (use newer version of go as available)
 
 ```
-wget https://golang.org/dl/go1.21.4.linux-amd64.tar.gz && tar xf go1.21.4.linux-amd64.tar.gz
+wget https://golang.org/dl/go1.22.8.linux-amd64.tar.gz && tar xf go1.22.8.linux-amd64.tar.gz
 sudo mv go /opt/go
 sudo ln -s /opt/go/bin/go /usr/bin/go
 # see `go help gopath` for details
@@ -209,7 +209,7 @@ sudo apt-get update && sudo apt-get install -y \
     build-essential git wget pkg-config libzmq3-dev libgflags-dev libsnappy-dev zlib1g-dev libzstd-dev  libbz2-dev liblz4-dev
 git clone https://github.com/facebook/rocksdb.git
 cd rocksdb
-git checkout v7.5.3
+git checkout v9.10.0
 CFLAGS=-fPIC CXXFLAGS=-fPIC make release
 ```
 

@@ -5,11 +5,9 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
-	"io"
 	"math/big"
 	"net"
 	"net/http"
-	"runtime/debug"
 	"time"
 
 	"github.com/golang/glog"
@@ -146,17 +144,30 @@ func (b *BitcoinRPC) Initialize() error {
 	glog.Info("rpc: block chain ", params.Name)
 
 	if b.ChainConfig.AlternativeEstimateFee == "whatthefee" {
+		glog.Info("Using WhatTheFee")
 		if b.alternativeFeeProvider, err = NewWhatTheFee(b, b.ChainConfig.AlternativeEstimateFeeParams); err != nil {
 			glog.Error("NewWhatTheFee error ", err, " Reverting to default estimateFee functionality")
 			// disable AlternativeEstimateFee logic
 			b.alternativeFeeProvider = nil
 		}
 	} else if b.ChainConfig.AlternativeEstimateFee == "mempoolspace" {
+		glog.Info("Using MempoolSpaceFee")
 		if b.alternativeFeeProvider, err = NewMempoolSpaceFee(b, b.ChainConfig.AlternativeEstimateFeeParams); err != nil {
 			glog.Error("MempoolSpaceFee error ", err, " Reverting to default estimateFee functionality")
 			// disable AlternativeEstimateFee logic
 			b.alternativeFeeProvider = nil
 		}
+	} else if b.ChainConfig.AlternativeEstimateFee == "mempoolspaceblock" {
+		glog.Info("Using MempoolSpaceBlockFee")
+		if b.alternativeFeeProvider, err = NewMempoolSpaceBlockFee(b, b.ChainConfig.AlternativeEstimateFeeParams); err != nil {
+			glog.Error("MempoolSpaceBlockFee error ", err, " Reverting to default estimateFee functionality")
+			// disable AlternativeEstimateFee logic
+			b.alternativeFeeProvider = nil
+		}
+	} else if len(b.ChainConfig.AlternativeEstimateFee) > 0 {
+		glog.Error("AlternativeEstimateFee ", b.ChainConfig.AlternativeEstimateFee, " not supported")
+	} else {
+		glog.Info("Using default estimateFee")
 	}
 
 	return nil
@@ -862,8 +873,23 @@ func (b *BitcoinRPC) EstimateFee(blocks int) (big.Int, error) {
 	return r, nil
 }
 
+// LongTermFeeRate returns smallest fee rate from historic blocks.
+func (b *BitcoinRPC) LongTermFeeRate() (*bchain.LongTermFeeRate, error) {
+	blocks := 1008 // ~7 days of blocks, highest number estimatesmartfee supports
+	glog.V(1).Info("rpc: estimatesmartfee (long term fee rate) - ", blocks)
+	// Going for the ECONOMICAL mode, to get the lowest fee rate
+	feePerUnit, err := b.blockchainEstimateSmartFee(blocks, false)
+	if err != nil {
+		return nil, err
+	}
+	return &bchain.LongTermFeeRate{
+		Blocks:     uint64(blocks),
+		FeePerUnit: feePerUnit,
+	}, nil
+}
+
 // SendRawTransaction sends raw transaction
-func (b *BitcoinRPC) SendRawTransaction(tx string) (string, error) {
+func (b *BitcoinRPC) SendRawTransaction(tx string, disableAlternativeRPC bool) (string, error) {
 	glog.V(1).Info("rpc: sendrawtransaction")
 
 	res := ResSendRawTransaction{}
@@ -907,26 +933,6 @@ func (b *BitcoinRPC) GetMempoolEntry(txid string) (*bchain.MempoolEntry, error) 
 	return res.Result, nil
 }
 
-func safeDecodeResponse(body io.ReadCloser, res interface{}) (err error) {
-	var data []byte
-	defer func() {
-		if r := recover(); r != nil {
-			glog.Error("unmarshal json recovered from panic: ", r, "; data: ", string(data))
-			debug.PrintStack()
-			if len(data) > 0 && len(data) < 2048 {
-				err = errors.Errorf("Error: %v", string(data))
-			} else {
-				err = errors.New("Internal error")
-			}
-		}
-	}()
-	data, err = io.ReadAll(body)
-	if err != nil {
-		return err
-	}
-	return json.Unmarshal(data, &res)
-}
-
 // Call calls Backend RPC interface, using RPCMarshaler interface to marshall the request
 func (b *BitcoinRPC) Call(req interface{}, res interface{}) error {
 	httpData, err := b.RPCMarshaler.Marshal(req)
@@ -950,11 +956,11 @@ func (b *BitcoinRPC) Call(req interface{}, res interface{}) error {
 	// if server returns HTTP error code it might not return json with response
 	// handle both cases
 	if httpRes.StatusCode != 200 {
-		err = safeDecodeResponse(httpRes.Body, &res)
+		err = common.SafeDecodeResponseFromReader(httpRes.Body, &res)
 		if err != nil {
 			return errors.Errorf("%v %v", httpRes.Status, err)
 		}
 		return nil
 	}
-	return safeDecodeResponse(httpRes.Body, &res)
+	return common.SafeDecodeResponseFromReader(httpRes.Body, &res)
 }
