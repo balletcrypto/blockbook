@@ -4,10 +4,27 @@ import (
 	"encoding/json"
 	"math/big"
 
+	"github.com/martinboehm/btcd/wire"
 	"github.com/martinboehm/btcutil/chaincfg"
 	"github.com/trezor/blockbook/bchain"
 	"github.com/trezor/blockbook/common"
 )
+
+// temp params for signet(wait btcd commit)
+// magic numbers
+const (
+	Testnet4Magic wire.BitcoinNet = 0x283f161c
+)
+
+// chain parameters
+var (
+	TestNet4Params chaincfg.Params
+)
+
+func init() {
+	TestNet4Params = chaincfg.TestNet3Params
+	TestNet4Params.Net = Testnet4Magic
+}
 
 // BitcoinParser handle
 type BitcoinParser struct {
@@ -16,9 +33,11 @@ type BitcoinParser struct {
 
 // NewBitcoinParser returns new BitcoinParser instance
 func NewBitcoinParser(params *chaincfg.Params, c *Configuration) *BitcoinParser {
-	return &BitcoinParser{
+	p := &BitcoinParser{
 		BitcoinLikeParser: NewBitcoinLikeParser(params, c),
 	}
+	p.VSizeSupport = true
+	return p
 }
 
 // GetChainParams contains network parameters for the main Bitcoin network,
@@ -31,6 +50,8 @@ func GetChainParams(chain string) *chaincfg.Params {
 	switch chain {
 	case "test":
 		return &chaincfg.TestNet3Params
+	case "testnet4":
+		return &TestNet4Params
 	case "regtest":
 		return &chaincfg.RegressionNetParams
 	case "signet":
@@ -63,6 +84,7 @@ type Tx struct {
 	Txid        string       `json:"txid"`
 	Version     int32        `json:"version"`
 	LockTime    uint32       `json:"locktime"`
+	VSize       int64        `json:"vsize,omitempty"`
 	Vin         []bchain.Vin `json:"vin"`
 	Vout        []Vout       `json:"vout"`
 	BlockHeight uint32       `json:"blockHeight,omitempty"`
@@ -88,6 +110,7 @@ func (p *BitcoinParser) ParseTxFromJson(msg json.RawMessage) (*bchain.Tx, error)
 	tx.Txid = bitcoinTx.Txid
 	tx.Version = bitcoinTx.Version
 	tx.LockTime = bitcoinTx.LockTime
+	tx.VSize = bitcoinTx.VSize
 	tx.Vin = bitcoinTx.Vin
 	tx.BlockHeight = bitcoinTx.BlockHeight
 	tx.Confirmations = bitcoinTx.Confirmations

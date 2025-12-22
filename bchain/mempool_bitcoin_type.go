@@ -1,10 +1,12 @@
 package bchain
 
 import (
+	"encoding/hex"
 	"math/big"
 	"time"
 
 	"github.com/golang/glog"
+	"github.com/juju/errors"
 )
 
 type chanInputPayload struct {
@@ -18,11 +20,14 @@ type MempoolBitcoinType struct {
 	chanTxid            chan string
 	chanAddrIndex       chan txidio
 	AddrDescForOutpoint AddrDescForOutpointFunc
+	golombFilterP       uint8
+	filterScripts       string
+	useZeroedKey        bool
 }
 
 // NewMempoolBitcoinType creates new mempool handler.
 // For now there is no cleanup of sync routines, the expectation is that the mempool is created only once per process
-func NewMempoolBitcoinType(chain BlockChain, workers int, subworkers int) *MempoolBitcoinType {
+func NewMempoolBitcoinType(chain BlockChain, workers int, subworkers int, golombFilterP uint8, filterScripts string, useZeroedKey bool) *MempoolBitcoinType {
 	m := &MempoolBitcoinType{
 		BaseMempool: BaseMempool{
 			chain:        chain,
@@ -31,6 +36,9 @@ func NewMempoolBitcoinType(chain BlockChain, workers int, subworkers int) *Mempo
 		},
 		chanTxid:      make(chan string, 1),
 		chanAddrIndex: make(chan txidio, 1),
+		golombFilterP: golombFilterP,
+		filterScripts: filterScripts,
+		useZeroedKey:  useZeroedKey,
 	}
 	for i := 0; i < workers; i++ {
 		go func(i int) {
@@ -45,11 +53,11 @@ func NewMempoolBitcoinType(chain BlockChain, workers int, subworkers int) *Mempo
 				}(j)
 			}
 			for txid := range m.chanTxid {
-				io, ok := m.getTxAddrs(txid, chanInput, chanResult)
+				io, golombFilter, ok := m.getTxAddrs(txid, chanInput, chanResult)
 				if !ok {
 					io = []addrIndex{}
 				}
-				m.chanAddrIndex <- txidio{txid, io}
+				m.chanAddrIndex <- txidio{txid, io, golombFilter}
 			}
 		}(i)
 	}
@@ -61,6 +69,10 @@ func (m *MempoolBitcoinType) getInputAddress(payload *chanInputPayload) *addrInd
 	var addrDesc AddressDescriptor
 	var value *big.Int
 	vin := &payload.tx.Vin[payload.index]
+	if vin.Txid == "" {
+		// cannot get address from empty input txid (for example in Litecoin mweb)
+		return nil
+	}
 	if m.AddrDescForOutpoint != nil {
 		addrDesc, value = m.AddrDescForOutpoint(Outpoint{vin.Txid, int32(vin.Vout)})
 	}
@@ -87,11 +99,29 @@ func (m *MempoolBitcoinType) getInputAddress(payload *chanInputPayload) *addrInd
 
 }
 
-func (m *MempoolBitcoinType) getTxAddrs(txid string, chanInput chan chanInputPayload, chanResult chan *addrIndex) ([]addrIndex, bool) {
+func (m *MempoolBitcoinType) computeGolombFilter(mtx *MempoolTx, tx *Tx) string {
+	gf, _ := NewGolombFilter(m.golombFilterP, m.filterScripts, mtx.Txid, m.useZeroedKey)
+	if gf == nil || !gf.Enabled {
+		return ""
+	}
+	for _, vin := range mtx.Vin {
+		gf.AddAddrDesc(vin.AddrDesc, tx)
+	}
+	for _, vout := range mtx.Vout {
+		b, err := hex.DecodeString(vout.ScriptPubKey.Hex)
+		if err == nil {
+			gf.AddAddrDesc(b, tx)
+		}
+	}
+	fb := gf.Compute()
+	return hex.EncodeToString(fb)
+}
+
+func (m *MempoolBitcoinType) getTxAddrs(txid string, chanInput chan chanInputPayload, chanResult chan *addrIndex) ([]addrIndex, string, bool) {
 	tx, err := m.chain.GetTransactionForMempool(txid)
 	if err != nil {
 		glog.Error("cannot get transaction ", txid, ": ", err)
-		return nil, false
+		return nil, "", false
 	}
 	glog.V(2).Info("mempool: gettxaddrs ", txid, ", ", len(tx.Vin), " inputs")
 	mtx := m.txToMempoolTx(tx)
@@ -138,10 +168,14 @@ func (m *MempoolBitcoinType) getTxAddrs(txid string, chanInput chan chanInputPay
 			io = append(io, *ai)
 		}
 	}
+	var golombFilter string
+	if m.golombFilterP > 0 {
+		golombFilter = m.computeGolombFilter(mtx, tx)
+	}
 	if m.OnNewTx != nil {
 		m.OnNewTx(mtx)
 	}
-	return io, true
+	return io, golombFilter, true
 }
 
 // Resync gets mempool transactions and maps outputs to transactions.
@@ -178,7 +212,7 @@ func (m *MempoolBitcoinType) Resync() (int, error) {
 				select {
 				// store as many processed transactions as possible
 				case tio := <-m.chanAddrIndex:
-					onNewEntry(tio.txid, txEntry{tio.io, txTime})
+					onNewEntry(tio.txid, txEntry{tio.io, txTime, tio.filter})
 					dispatched--
 				// send transaction to be processed
 				case m.chanTxid <- txid:
@@ -190,7 +224,7 @@ func (m *MempoolBitcoinType) Resync() (int, error) {
 	}
 	for i := 0; i < dispatched; i++ {
 		tio := <-m.chanAddrIndex
-		onNewEntry(tio.txid, txEntry{tio.io, txTime})
+		onNewEntry(tio.txid, txEntry{tio.io, txTime, tio.filter})
 	}
 
 	for txid, entry := range m.txEntries {
@@ -202,4 +236,20 @@ func (m *MempoolBitcoinType) Resync() (int, error) {
 	}
 	glog.Info("mempool: resync finished in ", time.Since(start), ", ", len(m.txEntries), " transactions in mempool")
 	return len(m.txEntries), nil
+}
+
+// GetTxidFilterEntries returns all mempool entries with golomb filter from
+func (m *MempoolBitcoinType) GetTxidFilterEntries(filterScripts string, fromTimestamp uint32) (MempoolTxidFilterEntries, error) {
+	if m.filterScripts != filterScripts {
+		return MempoolTxidFilterEntries{}, errors.Errorf("Unsupported script filter %s", filterScripts)
+	}
+	m.mux.Lock()
+	entries := make(map[string]string)
+	for txid, entry := range m.txEntries {
+		if entry.filter != "" && entry.time >= fromTimestamp {
+			entries[txid] = entry.filter
+		}
+	}
+	m.mux.Unlock()
+	return MempoolTxidFilterEntries{entries, m.useZeroedKey}, nil
 }

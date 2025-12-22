@@ -35,6 +35,7 @@ type BitcoinLikeParser struct {
 	XPubMagicSegwitP2sh          uint32
 	XPubMagicSegwitNative        uint32
 	Slip44                       uint32
+	VSizeSupport                 bool
 	minimumCoinbaseConfirmations int
 }
 
@@ -44,6 +45,7 @@ func NewBitcoinLikeParser(params *chaincfg.Params, c *Configuration) *BitcoinLik
 		BaseParser: &bchain.BaseParser{
 			BlockAddressesToKeep: c.BlockAddressesToKeep,
 			AmountDecimalPoint:   8,
+			AddressAliases:       c.AddressAliases,
 		},
 		Params:                       params,
 		XPubMagic:                    c.XPubMagic,
@@ -203,6 +205,14 @@ func (p *BitcoinLikeParser) outputScriptToAddresses(script []byte) ([]string, bo
 
 // TxFromMsgTx converts bitcoin wire Tx to bchain.Tx
 func (p *BitcoinLikeParser) TxFromMsgTx(t *wire.MsgTx, parseAddresses bool) bchain.Tx {
+	var vSize int64
+	if p.VSizeSupport {
+		baseSize := t.SerializeSizeStripped()
+		totalSize := t.SerializeSize()
+		weight := int64((baseSize * (blockchain.WitnessScaleFactor - 1)) + totalSize)
+		vSize = (weight + (blockchain.WitnessScaleFactor - 1)) / blockchain.WitnessScaleFactor
+	}
+
 	vin := make([]bchain.Vin, len(t.TxIn))
 	for i, in := range t.TxIn {
 		if blockchain.IsCoinBaseTx(t) {
@@ -221,6 +231,7 @@ func (p *BitcoinLikeParser) TxFromMsgTx(t *wire.MsgTx, parseAddresses bool) bcha
 			Vout:      in.PreviousOutPoint.Index,
 			Sequence:  in.Sequence,
 			ScriptSig: s,
+			Witness:   in.Witness,
 		}
 	}
 	vout := make([]bchain.Vout, len(t.TxOut))
@@ -247,6 +258,7 @@ func (p *BitcoinLikeParser) TxFromMsgTx(t *wire.MsgTx, parseAddresses bool) bcha
 		Txid:     t.TxHash().String(),
 		Version:  t.Version,
 		LockTime: t.LockTime,
+		VSize:    vSize,
 		Vin:      vin,
 		Vout:     vout,
 		// skip: BlockHash,
@@ -317,6 +329,11 @@ func (p *BitcoinLikeParser) UnpackTx(buf []byte) (*bchain.Tx, uint32, error) {
 // MinimumCoinbaseConfirmations returns minimum number of confirmations a coinbase transaction must have before it can be spent
 func (p *BitcoinLikeParser) MinimumCoinbaseConfirmations() int {
 	return p.minimumCoinbaseConfirmations
+}
+
+// SupportsVSize returns true if vsize of a transaction should be computed and returned by API
+func (p *BitcoinLikeParser) SupportsVSize() bool {
+	return p.VSizeSupport
 }
 
 var tapTweakTagHash = sha256.Sum256([]byte("TapTweak"))
@@ -423,7 +440,7 @@ var (
 )
 
 func init() {
-	xpubDesriptorRegex, _ = regexp.Compile(`^(?P<type>(sh\(wpkh|wpkh|pk|pkh|wpkh|wsh|tr))\((\[\w+/(?P<bip>\d+)'/\d+'?/\d+'?\])?(?P<xpub>\w+)(/(({(?P<changelist1>\d+(,\d+)*)})|(<(?P<changelist2>\d+(;\d+)*)>)|(?P<change>\d+))/\*)?\)+`)
+	xpubDesriptorRegex, _ = regexp.Compile(`^(?P<type>(sh\(wpkh|wpkh|pk|pkh|wpkh|wsh|tr))\((\[\w+/(?P<bip>\d+)['h]/\d+['h]?/\d+['h]?\])?(?P<xpub>\w+)(/(({(?P<changelist1>\d+(,\d+)*)})|(<(?P<changelist2>\d+(;\d+)*)>)|(?P<change>\d+))/\*)?\)+`)
 	typeSubexpIndex = xpubDesriptorRegex.SubexpIndex("type")
 	bipSubexpIndex = xpubDesriptorRegex.SubexpIndex("bip")
 	xpubSubexpIndex = xpubDesriptorRegex.SubexpIndex("xpub")

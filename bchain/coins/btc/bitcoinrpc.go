@@ -5,12 +5,9 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
-	"io"
-	"io/ioutil"
 	"math/big"
 	"net"
 	"net/http"
-	"runtime/debug"
 	"time"
 
 	"github.com/golang/glog"
@@ -23,16 +20,20 @@ import (
 // BitcoinRPC is an interface to JSON-RPC bitcoind service.
 type BitcoinRPC struct {
 	*bchain.BaseChain
-	client       http.Client
-	rpcURL       string
-	user         string
-	password     string
-	Mempool      *bchain.MempoolBitcoinType
-	ParseBlocks  bool
-	pushHandler  func(bchain.NotificationType)
-	mq           *bchain.MQ
-	ChainConfig  *Configuration
-	RPCMarshaler RPCMarshaler
+	client                 http.Client
+	rpcURL                 string
+	user                   string
+	password               string
+	Mempool                *bchain.MempoolBitcoinType
+	ParseBlocks            bool
+	pushHandler            func(bchain.NotificationType)
+	mq                     *bchain.MQ
+	ChainConfig            *Configuration
+	RPCMarshaler           RPCMarshaler
+	mempoolGolombFilterP   uint8
+	mempoolFilterScripts   string
+	mempoolUseZeroedKey    bool
+	alternativeFeeProvider alternativeFeeProviderInterface
 }
 
 // Configuration represents json config file
@@ -43,6 +44,7 @@ type Configuration struct {
 	RPCUser                      string `json:"rpc_user"`
 	RPCPass                      string `json:"rpc_pass"`
 	RPCTimeout                   int    `json:"rpc_timeout"`
+	AddressAliases               bool   `json:"address_aliases,omitempty"`
 	Parse                        bool   `json:"parse"`
 	MessageQueueBinding          string `json:"message_queue_binding"`
 	Subversion                   string `json:"subversion"`
@@ -59,6 +61,9 @@ type Configuration struct {
 	AlternativeEstimateFee       string `json:"alternative_estimate_fee,omitempty"`
 	AlternativeEstimateFeeParams string `json:"alternative_estimate_fee_params,omitempty"`
 	MinimumCoinbaseConfirmations int    `json:"minimumCoinbaseConfirmations,omitempty"`
+	MempoolGolombFilterP         uint8  `json:"mempool_golomb_filter_p,omitempty"`
+	MempoolFilterScripts         string `json:"mempool_filter_scripts,omitempty"`
+	MempoolFilterUseZeroedKey    bool   `json:"mempool_filter_use_zeroed_key,omitempty"`
 }
 
 // NewBitcoinRPC returns new BitcoinRPC instance.
@@ -95,15 +100,18 @@ func NewBitcoinRPC(config json.RawMessage, pushHandler func(bchain.NotificationT
 	}
 
 	s := &BitcoinRPC{
-		BaseChain:    &bchain.BaseChain{},
-		client:       http.Client{Timeout: time.Duration(c.RPCTimeout) * time.Second, Transport: transport},
-		rpcURL:       c.RPCURL,
-		user:         c.RPCUser,
-		password:     c.RPCPass,
-		ParseBlocks:  c.Parse,
-		ChainConfig:  &c,
-		pushHandler:  pushHandler,
-		RPCMarshaler: JSONMarshalerV2{},
+		BaseChain:            &bchain.BaseChain{},
+		client:               http.Client{Timeout: time.Duration(c.RPCTimeout) * time.Second, Transport: transport},
+		rpcURL:               c.RPCURL,
+		user:                 c.RPCUser,
+		password:             c.RPCPass,
+		ParseBlocks:          c.Parse,
+		ChainConfig:          &c,
+		pushHandler:          pushHandler,
+		RPCMarshaler:         JSONMarshalerV2{},
+		mempoolGolombFilterP: c.MempoolGolombFilterP,
+		mempoolFilterScripts: c.MempoolFilterScripts,
+		mempoolUseZeroedKey:  c.MempoolFilterUseZeroedKey,
 	}
 
 	return s, nil
@@ -136,11 +144,30 @@ func (b *BitcoinRPC) Initialize() error {
 	glog.Info("rpc: block chain ", params.Name)
 
 	if b.ChainConfig.AlternativeEstimateFee == "whatthefee" {
-		if err = InitWhatTheFee(b, b.ChainConfig.AlternativeEstimateFeeParams); err != nil {
-			glog.Error("InitWhatTheFee error ", err, " Reverting to default estimateFee functionality")
+		glog.Info("Using WhatTheFee")
+		if b.alternativeFeeProvider, err = NewWhatTheFee(b, b.ChainConfig.AlternativeEstimateFeeParams); err != nil {
+			glog.Error("NewWhatTheFee error ", err, " Reverting to default estimateFee functionality")
 			// disable AlternativeEstimateFee logic
-			b.ChainConfig.AlternativeEstimateFee = ""
+			b.alternativeFeeProvider = nil
 		}
+	} else if b.ChainConfig.AlternativeEstimateFee == "mempoolspace" {
+		glog.Info("Using MempoolSpaceFee")
+		if b.alternativeFeeProvider, err = NewMempoolSpaceFee(b, b.ChainConfig.AlternativeEstimateFeeParams); err != nil {
+			glog.Error("MempoolSpaceFee error ", err, " Reverting to default estimateFee functionality")
+			// disable AlternativeEstimateFee logic
+			b.alternativeFeeProvider = nil
+		}
+	} else if b.ChainConfig.AlternativeEstimateFee == "mempoolspaceblock" {
+		glog.Info("Using MempoolSpaceBlockFee")
+		if b.alternativeFeeProvider, err = NewMempoolSpaceBlockFee(b, b.ChainConfig.AlternativeEstimateFeeParams); err != nil {
+			glog.Error("MempoolSpaceBlockFee error ", err, " Reverting to default estimateFee functionality")
+			// disable AlternativeEstimateFee logic
+			b.alternativeFeeProvider = nil
+		}
+	} else if len(b.ChainConfig.AlternativeEstimateFee) > 0 {
+		glog.Error("AlternativeEstimateFee ", b.ChainConfig.AlternativeEstimateFee, " not supported")
+	} else {
+		glog.Info("Using default estimateFee")
 	}
 
 	return nil
@@ -149,7 +176,7 @@ func (b *BitcoinRPC) Initialize() error {
 // CreateMempool creates mempool if not already created, however does not initialize it
 func (b *BitcoinRPC) CreateMempool(chain bchain.BlockChain) (bchain.Mempool, error) {
 	if b.Mempool == nil {
-		b.Mempool = bchain.NewMempoolBitcoinType(chain, b.ChainConfig.MempoolWorkers, b.ChainConfig.MempoolSubWorkers)
+		b.Mempool = bchain.NewMempoolBitcoinType(chain, b.ChainConfig.MempoolWorkers, b.ChainConfig.MempoolSubWorkers, b.mempoolGolombFilterP, b.mempoolFilterScripts, b.mempoolUseZeroedKey)
 	}
 	return b.Mempool, nil
 }
@@ -551,7 +578,7 @@ func (b *BitcoinRPC) GetBlock(hash string, height uint32) (*bchain.Block, error)
 	if err != nil {
 		return nil, err
 	}
-	data, err := b.GetBlockRaw(hash)
+	data, err := b.GetBlockBytes(hash)
 	if err != nil {
 		return nil, err
 	}
@@ -588,7 +615,7 @@ func (b *BitcoinRPC) GetBlockInfo(hash string) (*bchain.BlockInfo, error) {
 // GetBlockWithoutHeader is an optimization - it does not call GetBlockHeader to get prev, next hashes
 // instead it sets to header only block hash and height passed in parameters
 func (b *BitcoinRPC) GetBlockWithoutHeader(hash string, height uint32) (*bchain.Block, error) {
-	data, err := b.GetBlockRaw(hash)
+	data, err := b.GetBlockBytes(hash)
 	if err != nil {
 		return nil, err
 	}
@@ -601,8 +628,8 @@ func (b *BitcoinRPC) GetBlockWithoutHeader(hash string, height uint32) (*bchain.
 	return block, nil
 }
 
-// GetBlockRaw returns block with given hash as bytes
-func (b *BitcoinRPC) GetBlockRaw(hash string) ([]byte, error) {
+// GetBlockRaw returns block with given hash as hex string
+func (b *BitcoinRPC) GetBlockRaw(hash string) (string, error) {
 	glog.V(1).Info("rpc: getblock (verbosity=0) ", hash)
 
 	res := ResGetBlockRaw{}
@@ -612,15 +639,24 @@ func (b *BitcoinRPC) GetBlockRaw(hash string) ([]byte, error) {
 	err := b.Call(&req, &res)
 
 	if err != nil {
-		return nil, errors.Annotatef(err, "hash %v", hash)
+		return "", errors.Annotatef(err, "hash %v", hash)
 	}
 	if res.Error != nil {
 		if IsErrBlockNotFound(res.Error) {
-			return nil, bchain.ErrBlockNotFound
+			return "", bchain.ErrBlockNotFound
 		}
-		return nil, errors.Annotatef(res.Error, "hash %v", hash)
+		return "", errors.Annotatef(res.Error, "hash %v", hash)
 	}
-	return hex.DecodeString(res.Result)
+	return res.Result, nil
+}
+
+// GetBlockBytes returns block with given hash as bytes
+func (b *BitcoinRPC) GetBlockBytes(hash string) ([]byte, error) {
+	block, err := b.GetBlockRaw(hash)
+	if err != nil {
+		return nil, err
+	}
+	return hex.DecodeString(block)
 }
 
 // GetBlockFull returns block with given hash
@@ -719,10 +755,10 @@ func (b *BitcoinRPC) GetTransaction(txid string) (*bchain.Tx, error) {
 		return nil, err
 	}
 	tx, err := b.Parser.ParseTxFromJson(r)
-	tx.CoinSpecificData = r
 	if err != nil {
 		return nil, errors.Annotatef(err, "txid %v", txid)
 	}
+	tx.CoinSpecificData = r
 	return tx, nil
 }
 
@@ -756,8 +792,7 @@ func (b *BitcoinRPC) getRawTransaction(txid string) (json.RawMessage, error) {
 	return res.Result, nil
 }
 
-// EstimateSmartFee returns fee estimation
-func (b *BitcoinRPC) EstimateSmartFee(blocks int, conservative bool) (big.Int, error) {
+func (b *BitcoinRPC) blockchainEstimateSmartFee(blocks int, conservative bool) (big.Int, error) {
 	// use EstimateFee if EstimateSmartFee is not supported
 	if !b.ChainConfig.SupportsEstimateSmartFee && b.ChainConfig.SupportsEstimateFee {
 		return b.EstimateFee(blocks)
@@ -774,7 +809,6 @@ func (b *BitcoinRPC) EstimateSmartFee(blocks int, conservative bool) (big.Int, e
 		req.Params.EstimateMode = "ECONOMICAL"
 	}
 	err := b.Call(&req, &res)
-
 	var r big.Int
 	if err != nil {
 		return r, err
@@ -789,8 +823,31 @@ func (b *BitcoinRPC) EstimateSmartFee(blocks int, conservative bool) (big.Int, e
 	return r, nil
 }
 
+// EstimateSmartFee returns fee estimation
+func (b *BitcoinRPC) EstimateSmartFee(blocks int, conservative bool) (big.Int, error) {
+	// use alternative estimator if enabled
+	if b.alternativeFeeProvider != nil {
+		r, err := b.alternativeFeeProvider.estimateFee(blocks)
+		// in case of error, fallback to default estimator
+		if err == nil {
+			return r, nil
+		}
+	}
+	return b.blockchainEstimateSmartFee(blocks, conservative)
+}
+
 // EstimateFee returns fee estimation.
 func (b *BitcoinRPC) EstimateFee(blocks int) (big.Int, error) {
+	var r big.Int
+	var err error
+	// use alternative estimator if enabled
+	if b.alternativeFeeProvider != nil {
+		r, err = b.alternativeFeeProvider.estimateFee(blocks)
+		// in case of error, fallback to default estimator
+		if err == nil {
+			return r, nil
+		}
+	}
 	// use EstimateSmartFee if EstimateFee is not supported
 	if !b.ChainConfig.SupportsEstimateFee && b.ChainConfig.SupportsEstimateSmartFee {
 		return b.EstimateSmartFee(blocks, true)
@@ -801,9 +858,8 @@ func (b *BitcoinRPC) EstimateFee(blocks int) (big.Int, error) {
 	res := ResEstimateFee{}
 	req := CmdEstimateFee{Method: "estimatefee"}
 	req.Params.Blocks = blocks
-	err := b.Call(&req, &res)
+	err = b.Call(&req, &res)
 
-	var r big.Int
 	if err != nil {
 		return r, err
 	}
@@ -817,8 +873,23 @@ func (b *BitcoinRPC) EstimateFee(blocks int) (big.Int, error) {
 	return r, nil
 }
 
+// LongTermFeeRate returns smallest fee rate from historic blocks.
+func (b *BitcoinRPC) LongTermFeeRate() (*bchain.LongTermFeeRate, error) {
+	blocks := 1008 // ~7 days of blocks, highest number estimatesmartfee supports
+	glog.V(1).Info("rpc: estimatesmartfee (long term fee rate) - ", blocks)
+	// Going for the ECONOMICAL mode, to get the lowest fee rate
+	feePerUnit, err := b.blockchainEstimateSmartFee(blocks, false)
+	if err != nil {
+		return nil, err
+	}
+	return &bchain.LongTermFeeRate{
+		Blocks:     uint64(blocks),
+		FeePerUnit: feePerUnit,
+	}, nil
+}
+
 // SendRawTransaction sends raw transaction
-func (b *BitcoinRPC) SendRawTransaction(tx string) (string, error) {
+func (b *BitcoinRPC) SendRawTransaction(tx string, disableAlternativeRPC bool) (string, error) {
 	glog.V(1).Info("rpc: sendrawtransaction")
 
 	res := ResSendRawTransaction{}
@@ -862,26 +933,6 @@ func (b *BitcoinRPC) GetMempoolEntry(txid string) (*bchain.MempoolEntry, error) 
 	return res.Result, nil
 }
 
-func safeDecodeResponse(body io.ReadCloser, res interface{}) (err error) {
-	var data []byte
-	defer func() {
-		if r := recover(); r != nil {
-			glog.Error("unmarshal json recovered from panic: ", r, "; data: ", string(data))
-			debug.PrintStack()
-			if len(data) > 0 && len(data) < 2048 {
-				err = errors.Errorf("Error: %v", string(data))
-			} else {
-				err = errors.New("Internal error")
-			}
-		}
-	}()
-	data, err = ioutil.ReadAll(body)
-	if err != nil {
-		return err
-	}
-	return json.Unmarshal(data, &res)
-}
-
 // Call calls Backend RPC interface, using RPCMarshaler interface to marshall the request
 func (b *BitcoinRPC) Call(req interface{}, res interface{}) error {
 	httpData, err := b.RPCMarshaler.Marshal(req)
@@ -905,11 +956,11 @@ func (b *BitcoinRPC) Call(req interface{}, res interface{}) error {
 	// if server returns HTTP error code it might not return json with response
 	// handle both cases
 	if httpRes.StatusCode != 200 {
-		err = safeDecodeResponse(httpRes.Body, &res)
+		err = common.SafeDecodeResponseFromReader(httpRes.Body, &res)
 		if err != nil {
 			return errors.Errorf("%v %v", httpRes.Status, err)
 		}
 		return nil
 	}
-	return safeDecodeResponse(httpRes.Body, &res)
+	return common.SafeDecodeResponseFromReader(httpRes.Body, &res)
 }

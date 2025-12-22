@@ -22,10 +22,10 @@
     "package_name": "backend-qtum-testnet",
     "package_revision": "satoshilabs-1",
     "system_user": "qtum",
-    "version": "0.20.2",
-    "binary_url": "https://github.com/qtumproject/qtum/releases/download/mainnet-fastlane-v0.20.2/qtum-0.20.2-x86_64-linux-gnu.tar.gz",
+    "version": "27.1",
+    "binary_url": "https://github.com/qtumproject/qtum/releases/download/v27.1/qtum-27.1-x86_64-linux-gnu.tar.gz",
     "verification_type": "sha256",
-    "verification_source": "52d746f2fb827c43cd8e1784a29ad6d21b843141b85002a49a3822ceebe8651d",
+    "verification_source": "0b1f612f0762184240c785c66b548f2dab8eed5e25481c635806ddf81807aa86",
     "extract_command": "tar -C backend --strip 1 -xf",
     "exclude_files": [
       "bin/qtum-qt"
