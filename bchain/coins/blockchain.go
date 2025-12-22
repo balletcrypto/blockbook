@@ -14,6 +14,7 @@ import (
 	"github.com/trezor/blockbook/bchain/coins/arbitrum"
 	"github.com/trezor/blockbook/bchain/coins/avalanche"
 	"github.com/trezor/blockbook/bchain/coins/base"
+	"github.com/trezor/blockbook/bchain/coins/bcd"
 	"github.com/trezor/blockbook/bchain/coins/bch"
 	"github.com/trezor/blockbook/bchain/coins/bellcoin"
 	"github.com/trezor/blockbook/bchain/coins/bitcore"
@@ -48,6 +49,7 @@ import (
 	"github.com/trezor/blockbook/bchain/coins/pivx"
 	"github.com/trezor/blockbook/bchain/coins/polis"
 	"github.com/trezor/blockbook/bchain/coins/polygon"
+	"github.com/trezor/blockbook/bchain/coins/qtc"
 	"github.com/trezor/blockbook/bchain/coins/qtum"
 	"github.com/trezor/blockbook/bchain/coins/ravencoin"
 	"github.com/trezor/blockbook/bchain/coins/ritocoin"
@@ -130,6 +132,7 @@ func init() {
 	BlockChainFactories["Divi"] = divi.NewDiviRPC
 	BlockChainFactories["CPUchain"] = cpuchain.NewCPUchainRPC
 	BlockChainFactories["Unobtanium"] = unobtanium.NewUnobtaniumRPC
+	BlockChainFactories["Bitcoin Diamond"] = bcd.NewBitcoinDiamondRPC
 	BlockChainFactories["DeepOnion"] = deeponion.NewDeepOnionRPC
 	BlockChainFactories["SnowGem"] = snowgem.NewSnowGemRPC
 	BlockChainFactories["Bitcore"] = bitcore.NewBitcoreRPC
@@ -152,6 +155,25 @@ func init() {
 	BlockChainFactories["Arbitrum Nova Archive"] = arbitrum.NewArbitrumRPC
 	BlockChainFactories["Base"] = base.NewBaseRPC
 	BlockChainFactories["Base Archive"] = base.NewBaseRPC
+	BlockChainFactories["Qitcoin"] = qtc.NewQitcoinRPC
+}
+
+// GetCoinNameFromConfig gets coin name and coin shortcut from config file
+func GetCoinNameFromConfig(configfile string) (string, string, string, error) {
+	data, err := ioutil.ReadFile(configfile)
+	if err != nil {
+		return "", "", "", errors.Annotatef(err, "Error reading file %v", configfile)
+	}
+	var cn struct {
+		CoinName     string `json:"coin_name"`
+		CoinShortcut string `json:"coin_shortcut"`
+		CoinLabel    string `json:"coin_label"`
+	}
+	err = json.Unmarshal(data, &cn)
+	if err != nil {
+		return "", "", "", errors.Annotatef(err, "Error parsing file %v", configfile)
+	}
+	return cn.CoinName, cn.CoinShortcut, cn.CoinLabel, nil
 }
 
 // NewBlockChain creates bchain.BlockChain and bchain.Mempool for the coin passed by the parameter coin

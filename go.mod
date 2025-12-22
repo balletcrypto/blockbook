@@ -1,4 +1,4 @@
-module github.com/trezor/blockbook
+module github.com/balletcrypto/blockbook
 
 go 1.25.0
 
